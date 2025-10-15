@@ -14,15 +14,6 @@ CREATE TABLE IF NOT EXISTS groups (
 )
 """)
 
-# Group Members
-c.execute("""
-CREATE TABLE IF NOT EXISTS group_members (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id INTEGER,
-    member_name TEXT
-)
-""")
-
 # Expenses
 c.execute("""
 CREATE TABLE IF NOT EXISTS expenses (
@@ -53,14 +44,6 @@ def add_group(name):
 def load_groups():
     c.execute("SELECT * FROM groups")
     return c.fetchall()
-
-def add_member(group_id, member_name):
-    c.execute("INSERT INTO group_members (group_id, member_name) VALUES (?, ?)", (group_id, member_name))
-    conn.commit()
-
-def load_members(group_id):
-    c.execute("SELECT member_name FROM group_members WHERE group_id=?", (group_id,))
-    return [row[0] for row in c.fetchall()]
 
 def add_expense(group_id, desc, amount, paid_by, shares):
     c.execute("INSERT INTO expenses (group_id, description, amount, paidBy) VALUES (?, ?, ?, ?)",
@@ -98,24 +81,20 @@ def calculate_balances(expenses):
 def min_cash_flow(balances):
     settlements = []
     bal = balances.copy()
-    people = list(bal.keys())
-
     while True:
         max_credit = max(bal, key=lambda k: bal[k])
         max_debit = min(bal, key=lambda k: bal[k])
         if round(bal[max_credit], 2) == 0 and round(bal[max_debit], 2) == 0:
             break
-
         amount = min(-bal[max_debit], bal[max_credit])
         bal[max_credit] -= amount
         bal[max_debit] += amount
         settlements.append(f"💰 {max_debit} pays ₹{amount:.2f} to {max_credit}")
-
     return settlements
 
 # ----------------- Streamlit UI -----------------
 st.set_page_config(page_title="Expense Splitter", page_icon="💸", layout="wide")
-st.title("💸 Expense Splitter with Groups & Unequal Splits")
+st.title("💸 Expense Splitter (Groups + Custom Participants)")
 
 tab1, tab2, tab3, tab4 = st.tabs(["👥 Groups", "➕ Expenses", "📊 Summary", "🤝 Settlements"])
 
@@ -132,15 +111,6 @@ with tab1:
             if new_group:
                 add_group(new_group)
                 st.success("✅ Group created. Refresh to see it.")
-    else:
-        group_id = group_names[selected_group]
-        members = load_members(group_id)
-        st.write("**Members:**", ", ".join(members) if members else "No members yet.")
-        new_member = st.text_input("Add Member")
-        if st.button("Add Member"):
-            if new_member:
-                add_member(group_id, new_member)
-                st.success("✅ Member added. Refresh to see it.")
 
 # ---- Expenses Tab ----
 with tab2:
@@ -150,13 +120,15 @@ with tab2:
         group_names = {g[1]: g[0] for g in groups}
         selected_group = st.selectbox("Select Group", list(group_names.keys()))
         group_id = group_names[selected_group]
-        members = load_members(group_id)
 
         with st.form("expense_form"):
             desc = st.text_input("Description")
             amount = st.number_input("Amount", min_value=1.0, format="%.2f")
-            paid_by = st.selectbox("Paid By", members)
-            participants = st.multiselect("Participants", members, default=members)
+            paid_by = st.text_input("Paid By (enter name)")
+
+            participants_input = st.text_input("Participants (comma separated)")
+            participants = [p.strip() for p in participants_input.split(",") if p.strip()]
+
             split_type = st.radio("Split Type", ["Equal", "Percentage", "Custom Amount"])
 
             shares = {}
