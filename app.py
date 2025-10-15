@@ -5,155 +5,235 @@ import sqlite3
 # ----------------- Database Setup -----------------
 conn = sqlite3.connect("expenses.db", check_same_thread=False)
 c = conn.cursor()
+
+# Groups
+c.execute("""
+CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT
+)
+""")
+
+# Group Members
+c.execute("""
+CREATE TABLE IF NOT EXISTS group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER,
+    member_name TEXT
+)
+""")
+
+# Expenses
 c.execute("""
 CREATE TABLE IF NOT EXISTS expenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER,
     description TEXT,
     amount REAL,
-    paidBy TEXT,
-    participants TEXT
+    paidBy TEXT
+)
+""")
+
+# Expense Shares
+c.execute("""
+CREATE TABLE IF NOT EXISTS expense_shares (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    expense_id INTEGER,
+    participant TEXT,
+    share REAL
 )
 """)
 conn.commit()
 
-# ----------------- Streamlit Setup -----------------
-st.set_page_config(page_title="Expense Splitter", page_icon="💸", layout="centered")
-st.title("💸 Expense Splitter")
-
 # ----------------- Functions -----------------
-def add_expense_db(description, amount, paid_by, participants):
-    participants_str = ",".join(participants)
-    c.execute("INSERT INTO expenses (description, amount, paidBy, participants) VALUES (?, ?, ?, ?)",
-              (description, amount, paid_by, participants_str))
+def add_group(name):
+    c.execute("INSERT INTO groups (name) VALUES (?)", (name,))
     conn.commit()
 
-def delete_expense_db(expense_id):
-    c.execute("DELETE FROM expenses WHERE id=?", (expense_id,))
+def load_groups():
+    c.execute("SELECT * FROM groups")
+    return c.fetchall()
+
+def add_member(group_id, member_name):
+    c.execute("INSERT INTO group_members (group_id, member_name) VALUES (?, ?)", (group_id, member_name))
     conn.commit()
 
-def load_expenses():
-    c.execute("SELECT id, description, amount, paidBy, participants FROM expenses")
-    data = c.fetchall()
+def load_members(group_id):
+    c.execute("SELECT member_name FROM group_members WHERE group_id=?", (group_id,))
+    return [row[0] for row in c.fetchall()]
+
+def add_expense(group_id, desc, amount, paid_by, shares):
+    c.execute("INSERT INTO expenses (group_id, description, amount, paidBy) VALUES (?, ?, ?, ?)",
+              (group_id, desc, amount, paid_by))
+    expense_id = c.lastrowid
+    for p, s in shares.items():
+        c.execute("INSERT INTO expense_shares (expense_id, participant, share) VALUES (?, ?, ?)",
+                  (expense_id, p, s))
+    conn.commit()
+
+def load_expenses(group_id):
+    c.execute("SELECT id, description, amount, paidBy FROM expenses WHERE group_id=?", (group_id,))
+    rows = c.fetchall()
     expenses = []
-    for row in data:
+    for r in rows:
+        c.execute("SELECT participant, share FROM expense_shares WHERE expense_id=?", (r[0],))
+        shares = dict(c.fetchall())
         expenses.append({
-            "id": row[0],
-            "description": row[1],
-            "amount": row[2],
-            "paidBy": row[3],
-            "participants": row[4].split(",")
+            "id": r[0],
+            "description": r[1],
+            "amount": r[2],
+            "paidBy": r[3],
+            "shares": shares
         })
     return expenses
 
 def calculate_balances(expenses):
     balances = {}
     for exp in expenses:
-        split = round(exp["amount"] / len(exp["participants"]), 2)
-        for p in exp["participants"]:
-            balances[p] = balances.get(p, 0) - split
+        for p, share in exp["shares"].items():
+            balances[p] = balances.get(p, 0) - share
         balances[exp["paidBy"]] = balances.get(exp["paidBy"], 0) + exp["amount"]
     return balances
 
-def calculate_settlements(balances):
-    creditors = []
-    debtors = []
-    for person, bal in balances.items():
-        if bal > 0:
-            creditors.append({"name": person, "amount": bal})
-        elif bal < 0:
-            debtors.append({"name": person, "amount": -bal})
-
+def min_cash_flow(balances):
     settlements = []
-    while creditors and debtors:
-        creditors.sort(key=lambda x: x["amount"], reverse=True)
-        debtors.sort(key=lambda x: x["amount"], reverse=True)
-        creditor = creditors[0]
-        debtor = debtors[0]
-        amount = min(creditor["amount"], debtor["amount"])
-        settlements.append(f"💰 {debtor['name']} pays ₹{amount:.2f} to {creditor['name']}")
-        creditor["amount"] -= amount
-        debtor["amount"] -= amount
-        if creditor["amount"] == 0: creditors.pop(0)
-        if debtor["amount"] == 0: debtors.pop(0)
+    bal = balances.copy()
+    people = list(bal.keys())
+
+    while True:
+        max_credit = max(bal, key=lambda k: bal[k])
+        max_debit = min(bal, key=lambda k: bal[k])
+        if round(bal[max_credit], 2) == 0 and round(bal[max_debit], 2) == 0:
+            break
+
+        amount = min(-bal[max_debit], bal[max_credit])
+        bal[max_credit] -= amount
+        bal[max_debit] += amount
+        settlements.append(f"💰 {max_debit} pays ₹{amount:.2f} to {max_credit}")
+
     return settlements
 
-# ----------------- UI -----------------
-st.subheader("➕ Add New Expense")
-expenses = load_expenses()
+# ----------------- Streamlit UI -----------------
+st.set_page_config(page_title="Expense Splitter", page_icon="💸", layout="wide")
+st.title("💸 Expense Splitter with Groups & Unequal Splits")
 
-with st.form("expense_form"):
-    desc = st.text_input("Description")
-    amount = st.number_input("Amount", min_value=1.0, format="%.2f")
-    paid_by = st.text_input("Paid By")
+tab1, tab2, tab3, tab4 = st.tabs(["👥 Groups", "➕ Expenses", "📊 Summary", "🤝 Settlements"])
 
-    # Participants free text input
-    participants_input = st.text_input("Participants (comma separated)")
-    participants = [p.strip() for p in participants_input.split(",") if p.strip()]
+# ---- Groups Tab ----
+with tab1:
+    st.subheader("Manage Groups")
+    groups = load_groups()
+    group_names = {g[1]: g[0] for g in groups}
+    selected_group = st.selectbox("Select Group", ["-- Create New --"] + list(group_names.keys()))
 
-    submitted = st.form_submit_button("Add Expense")
+    if selected_group == "-- Create New --":
+        new_group = st.text_input("New Group Name")
+        if st.button("Create Group"):
+            if new_group:
+                add_group(new_group)
+                st.success("✅ Group created. Refresh to see it.")
+    else:
+        group_id = group_names[selected_group]
+        members = load_members(group_id)
+        st.write("**Members:**", ", ".join(members) if members else "No members yet.")
+        new_member = st.text_input("Add Member")
+        if st.button("Add Member"):
+            if new_member:
+                add_member(group_id, new_member)
+                st.success("✅ Member added. Refresh to see it.")
 
-    if submitted:
-        if desc and amount and paid_by and participants:
-            # Check duplicates
-            if len(participants) != len(set(participants)):
-                st.error("⚠️ Duplicate participant name found in list!")
-            elif participants.count(paid_by) > 1:
-                st.error(f"⚠️ '{paid_by}' is already duplicated in participants!")
+# ---- Expenses Tab ----
+with tab2:
+    st.subheader("Add Expense")
+    groups = load_groups()
+    if groups:
+        group_names = {g[1]: g[0] for g in groups}
+        selected_group = st.selectbox("Select Group", list(group_names.keys()))
+        group_id = group_names[selected_group]
+        members = load_members(group_id)
+
+        with st.form("expense_form"):
+            desc = st.text_input("Description")
+            amount = st.number_input("Amount", min_value=1.0, format="%.2f")
+            paid_by = st.selectbox("Paid By", members)
+            participants = st.multiselect("Participants", members, default=members)
+            split_type = st.radio("Split Type", ["Equal", "Percentage", "Custom Amount"])
+
+            shares = {}
+            if split_type == "Equal" and participants:
+                share_each = round(amount / len(participants), 2)
+                for p in participants:
+                    shares[p] = share_each
+            elif split_type == "Percentage" and participants:
+                total_pct = 0
+                for p in participants:
+                    pct = st.number_input(f"{p} (%)", min_value=0.0, max_value=100.0, key=p)
+                    shares[p] = round(amount * pct / 100, 2)
+                    total_pct += pct
+                if total_pct != 100:
+                    st.warning("⚠️ Percentages must add to 100")
+            elif split_type == "Custom Amount" and participants:
+                total_amt = 0
+                for p in participants:
+                    share = st.number_input(f"{p}'s Share", min_value=0.0, key=p)
+                    shares[p] = share
+                    total_amt += share
+                if round(total_amt, 2) != round(amount, 2):
+                    st.warning("⚠️ Shares must add to total amount")
+
+            submitted = st.form_submit_button("Add Expense")
+            if submitted and shares:
+                add_expense(group_id, desc, amount, paid_by, shares)
+                st.success("✅ Expense added.")
+    else:
+        st.info("Create a group first.")
+
+# ---- Summary Tab ----
+with tab3:
+    st.subheader("Balances")
+    groups = load_groups()
+    if groups:
+        group_names = {g[1]: g[0] for g in groups}
+        selected_group = st.selectbox("Select Group for Summary", list(group_names.keys()))
+        group_id = group_names[selected_group]
+        expenses = load_expenses(group_id)
+
+        if expenses:
+            balances = calculate_balances(expenses)
+            for p, b in balances.items():
+                if b > 0:
+                    st.success(f"✅ {p} should receive ₹{b:.2f}")
+                elif b < 0:
+                    st.error(f"🔴 {p} owes ₹{abs(b):.2f}")
+                else:
+                    st.info(f"⚪ {p} is settled up")
+
+            df = pd.DataFrame(balances.items(), columns=["Person", "Balance"])
+            st.bar_chart(df.set_index("Person"))
+        else:
+            st.info("No expenses yet.")
+    else:
+        st.info("Create a group first.")
+
+# ---- Settlements Tab ----
+with tab4:
+    st.subheader("Optimal Settlements")
+    groups = load_groups()
+    if groups:
+        group_names = {g[1]: g[0] for g in groups}
+        selected_group = st.selectbox("Select Group for Settlements", list(group_names.keys()))
+        group_id = group_names[selected_group]
+        expenses = load_expenses(group_id)
+
+        if expenses:
+            balances = calculate_balances(expenses)
+            settlements = min_cash_flow(balances)
+            if settlements:
+                for s in settlements:
+                    st.write(s)
             else:
-                if paid_by not in participants:
-                    participants.append(paid_by)
-                add_expense_db(desc, amount, paid_by, participants)
-                st.success("Expense added successfully ✅")
-                st.rerun()
+                st.success("🎉 Everyone is settled up!")
         else:
-            st.error("Please fill all fields!")
-
-# ----------------- Show Expenses -----------------
-st.subheader("📋 Expenses")
-if expenses:
-    df = pd.DataFrame(expenses)
-    df_display = df.copy()
-    df_display["participants"] = df_display["participants"].apply(lambda x: ", ".join(x))
-    df_display["amount"] = df_display["amount"].apply(lambda x: f"₹{x:.2f}")
-    for idx, row in df_display.iterrows():
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            st.write(f"**{row['description']}** | Amount: {row['amount']} | Paid By: {row['paidBy']} | Participants: {row['participants']}")
-        with col2:
-            if st.button(f"Delete {row['description']}", key=row['id']):
-                delete_expense_db(row['id'])
-                st.rerun()
-else:
-    st.info("No expenses yet.")
-
-# ----------------- Summary -----------------
-st.subheader("📊 Summary")
-balances = calculate_balances(expenses)
-if balances:
-    for person, bal in balances.items():
-        if bal > 0:
-            st.markdown(f"✅ **{person} should receive ₹{bal:.2f}**")
-        elif bal < 0:
-            st.markdown(f"🔴 **{person} owes ₹{abs(bal):.2f}**")
-        else:
-            st.markdown(f"⚪ **{person} is settled up**")
-    bal_df = pd.DataFrame(balances.items(), columns=["Person", "Balance"])
-    st.bar_chart(bal_df.set_index("Person"))
-else:
-    st.info("No balances to calculate yet.")
-
-# ----------------- Settlements -----------------
-st.subheader("🤝 Settlements")
-settlements = calculate_settlements(balances)
-if settlements:
-    for s in settlements:
-        st.write(s)
-else:
-    st.success("🎉 Everyone is settled up!")
-
-# ----------------- Download CSV -----------------
-if expenses:
-    df_export = pd.DataFrame(expenses)
-    df_export["participants"] = df_export["participants"].apply(lambda x: ", ".join(x))
-    csv = df_export.to_csv(index=False).encode('utf-8')
-    st.download_button("Download Expenses CSV", csv, "expenses.csv", "text/csv")
+            st.info("No expenses yet.")
+    else:
+        st.info("Create a group first.")
