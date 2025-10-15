@@ -80,34 +80,31 @@ def calculate_settlements(balances):
 # ----------------- UI -----------------
 st.subheader("➕ Add New Expense")
 expenses = load_expenses()
-all_people = list({p for exp in expenses for p in exp['participants']} | {exp['paidBy'] for exp in expenses})
 
 with st.form("expense_form"):
     desc = st.text_input("Description")
     amount = st.number_input("Amount", min_value=1.0, format="%.2f")
     paid_by = st.text_input("Paid By")
 
-    # Show existing participants only if they exist
-    participants = st.multiselect(
-        "Participants",
-        options=all_people if all_people else [],
-        help="Select from existing participants (if any)"
-    )
-
-    # Allow adding a new participant manually
-    new_participant = st.text_input("Add new participant (optional)")
-    if new_participant:
-        participants.append(new_participant)
+    # Participants free text input
+    participants_input = st.text_input("Participants (comma separated)")
+    participants = [p.strip() for p in participants_input.split(",") if p.strip()]
 
     submitted = st.form_submit_button("Add Expense")
 
     if submitted:
         if desc and amount and paid_by and participants:
-            if paid_by not in participants:
-                participants.append(paid_by)
-            add_expense_db(desc, amount, paid_by, participants)
-            st.success("Expense added successfully ✅")
-            st.experimental_rerun()
+            # Check duplicates
+            if len(participants) != len(set(participants)):
+                st.error("⚠️ Duplicate participant name found in list!")
+            elif participants.count(paid_by) > 1:
+                st.error(f"⚠️ '{paid_by}' is already duplicated in participants!")
+            else:
+                if paid_by not in participants:
+                    participants.append(paid_by)
+                add_expense_db(desc, amount, paid_by, participants)
+                st.success("Expense added successfully ✅")
+                st.rerun()
         else:
             st.error("Please fill all fields!")
 
@@ -125,7 +122,7 @@ if expenses:
         with col2:
             if st.button(f"Delete {row['description']}", key=row['id']):
                 delete_expense_db(row['id'])
-                st.experimental_rerun()
+                st.rerun()
 else:
     st.info("No expenses yet.")
 
