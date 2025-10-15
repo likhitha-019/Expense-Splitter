@@ -1,6 +1,9 @@
 import streamlit as st
-from collections import defaultdict
+from collections import defaultdict, Counter
 import uuid
+import pandas as pd
+import matplotlib.pyplot as plt
+from datetime import date
 
 st.set_page_config(page_title="Multi-Payer Expense Splitter", layout="wide")
 
@@ -9,6 +12,8 @@ if "members" not in st.session_state:
     st.session_state.members = []
 if "expenses" not in st.session_state:
     st.session_state.expenses = []
+if "groups" not in st.session_state:
+    st.session_state.groups = {}
 
 st.title("💰 Multi-Payer Expense Splitter")
 st.markdown("Split costs fairly when different people pay for different items. Perfect for shared meals, trips, or roommate life!")
@@ -16,20 +21,29 @@ st.markdown("Split costs fairly when different people pay for different items. P
 # Sidebar: Add group members
 st.sidebar.header("👥 Group Members")
 new_member = st.sidebar.text_input("Add member name")
+new_group = st.sidebar.selectbox("Assign to group", ["Roommates", "Friends", "Family", "Other"])
 if st.sidebar.button("Add Member") and new_member:
     if new_member not in st.session_state.members:
         st.session_state.members.append(new_member)
+        st.session_state.groups[new_member] = new_group
     else:
         st.sidebar.warning("Member already exists.")
 
 if st.session_state.members:
     st.sidebar.write("### Current Members")
-    st.sidebar.write(", ".join(st.session_state.members))
+    for m in st.session_state.members:
+        st.sidebar.write(f"- {m} ({st.session_state.groups.get(m, 'Unassigned')})")
+
+# Sidebar: Date filter
+st.sidebar.subheader("📅 Filter by Date")
+start_date = st.sidebar.date_input("Start Date", value=date(2025, 1, 1))
+end_date = st.sidebar.date_input("End Date", value=date.today())
 
 # Main: Log itemized expense
 st.subheader("🧾 Log a New Itemized Expense")
 with st.form("expense_form"):
     description = st.text_input("Expense Description")
+    expense_date = st.date_input("Expense Date", value=date.today())
     num_items = st.number_input("Number of items", min_value=1, max_value=10, value=1, step=1)
 
     item_data = []
@@ -54,6 +68,7 @@ with st.form("expense_form"):
             expense = {
                 "id": str(uuid.uuid4()),
                 "description": description,
+                "date": expense_date,
                 "items": item_data
             }
             st.session_state.expenses.append(expense)
@@ -61,17 +76,23 @@ with st.form("expense_form"):
         else:
             st.error("Please fill all fields correctly.")
 
+# Filter expenses by date
+filtered_expenses = [
+    exp for exp in st.session_state.expenses
+    if start_date <= exp["date"] <= end_date
+]
+
 # Display expenses
 st.subheader("📋 Expense History")
-if st.session_state.expenses:
-    for exp in st.session_state.expenses:
-        st.markdown(f"**{exp['description']}**")
+if filtered_expenses:
+    for exp in filtered_expenses:
+        st.markdown(f"**{exp['description']}** ({exp['date']})")
         for item in exp["items"]:
             st.markdown(
                 f"- {item['payer']} paid ₹{item['cost']:.2f} for *{item['desc']}*, shared by {', '.join(item['participants'])}"
             )
 else:
-    st.info("No expenses logged yet.")
+    st.info("No expenses logged in selected date range.")
 
 # Calculate balances
 def calculate_balances(members, expenses):
@@ -111,11 +132,50 @@ def suggest_settlements(balances):
 
 # Show balances
 st.subheader("📊 Per-Person Balances")
-balances = calculate_balances(st.session_state.members, st.session_state.expenses)
+balances = calculate_balances(st.session_state.members, filtered_expenses)
 for person in st.session_state.members:
     st.write(f"- {person}: ₹{balances[person]:.2f}")
 
-# Show settlement suggestions
+# Bar Chart: Debt vs Credit
+st.subheader("📉 Balance Bar Chart")
+balance_df = pd.DataFrame(list(balances.items()), columns=["Member", "Balance"])
+colors = ['green' if x > 0 else 'red' for x in balance_df["Balance"]]
+
+fig, ax = plt.subplots()
+ax.bar(balance_df["Member"], balance_df["Balance"], color=colors)
+ax.axhline(0, color='black', linewidth=0.8)
+ax.set_ylabel("Balance (₹)")
+ax.set_title("Who owes and who is owed")
+st.pyplot(fig)
+
+# Pie Chart: Contributions
+def get_total_contributions(expenses):
+    contributions = Counter()
+    for exp in expenses:
+        for item in exp["items"]:
+            contributions[item["payer"]] += item["cost"]
+    return contributions
+
+contributions = get_total_contributions(filtered_expenses)
+if contributions:
+    st.subheader("🍰 Contribution Pie Chart")
+    contrib_df = pd.DataFrame(list(contributions.items()), columns=["Member", "Total Paid"])
+    fig2, ax2 = plt.subplots()
+    ax2.pie(contrib_df["Total Paid"], labels=contrib_df["Member"], autopct='%1.1f%%', startangle=90)
+    ax2.axis('equal')
+    st.pyplot(fig2)
+
+# Group-wise summary
+st.subheader("👥 Group-Wise Balances")
+group_balances = defaultdict(float)
+for member, balance in balances.items():
+    group = st.session_state.groups.get(member, "Unassigned")
+    group_balances[group] += balance
+
+for group, total in group_balances.items():
+    st.write(f"- {group}: ₹{total:.2f}")
+
+# Settlement suggestions
 st.subheader("🤝 Settlement Suggestions")
 settlements = suggest_settlements(balances)
 if settlements:
@@ -124,3 +184,18 @@ if settlements:
 else:
     st.write("All balances are settled!")
 
+# Downloadable report
+st.subheader("📥 Download Report")
+report_text = f"Expense Report ({start_date} to {end_date})\n\n"
+for person in st.session_state.members:
+    report_text += f"{person}: ₹{balances[person]:.2f}\n"
+report_text += "\nSettlement Suggestions:\n"
+for s in settlements:
+    report_text += f"{s}\n"
+
+st.download_button(
+    label="Download Summary as TXT",
+    data=report_text,
+    file_name="expense_report.txt",
+    mime="text/plain"
+)
