@@ -2,7 +2,7 @@ import streamlit as st
 from collections import defaultdict
 import uuid
 
-st.set_page_config(page_title="Itemized Expense Splitter", layout="wide")
+st.set_page_config(page_title="Multi-Payer Expense Splitter", layout="wide")
 
 # Initialize session state
 if "members" not in st.session_state:
@@ -10,8 +10,8 @@ if "members" not in st.session_state:
 if "expenses" not in st.session_state:
     st.session_state.expenses = []
 
-st.title("🍽️ Itemized Expense Splitter")
-st.markdown("Split costs fairly based on who consumed what. Perfect for roommates or travel buddies!")
+st.title("💰 Multi-Payer Expense Splitter")
+st.markdown("Split costs fairly when different people pay for different items. Perfect for shared meals, trips, or roommate life!")
 
 # Sidebar: Add group members
 st.sidebar.header("👥 Group Members")
@@ -29,44 +29,32 @@ if st.session_state.members:
 # Main: Log itemized expense
 st.subheader("🧾 Log a New Itemized Expense")
 with st.form("expense_form"):
-    payer = st.selectbox("Who paid?", st.session_state.members)
-    total_amount = st.number_input("Total Amount Paid", min_value=0.0, format="%.2f")
     description = st.text_input("Expense Description")
-
-    st.markdown("### Add Items")
-    item_descriptions = []
-    item_costs = []
-    item_participants = []
-
     num_items = st.number_input("Number of items", min_value=1, max_value=10, value=1, step=1)
 
+    item_data = []
     for i in range(int(num_items)):
         st.markdown(f"**Item {i+1}**")
         item_desc = st.text_input(f"Item Description {i+1}", key=f"desc_{i}")
         item_cost = st.number_input(f"Item Cost {i+1}", min_value=0.0, format="%.2f", key=f"cost_{i}")
+        item_payer = st.selectbox(f"Who paid for Item {i+1}?", st.session_state.members, key=f"payer_{i}")
         item_users = st.multiselect(f"Who shared Item {i+1}?", st.session_state.members, key=f"users_{i}")
 
-        item_descriptions.append(item_desc)
-        item_costs.append(item_cost)
-        item_participants.append(item_users)
+        item_data.append({
+            "desc": item_desc,
+            "cost": item_cost,
+            "payer": item_payer,
+            "participants": item_users
+        })
 
     submitted = st.form_submit_button("Add Expense")
 
     if submitted:
-        if payer and total_amount > 0 and all(item_costs) and all(item_participants):
+        if all(item["cost"] > 0 and item["participants"] for item in item_data):
             expense = {
                 "id": str(uuid.uuid4()),
-                "payer": payer,
-                "total_amount": total_amount,
                 "description": description,
-                "items": [
-                    {
-                        "desc": item_descriptions[i],
-                        "cost": item_costs[i],
-                        "participants": item_participants[i],
-                    }
-                    for i in range(int(num_items))
-                ],
+                "items": item_data
             }
             st.session_state.expenses.append(expense)
             st.success("Itemized expense added successfully.")
@@ -77,10 +65,10 @@ with st.form("expense_form"):
 st.subheader("📋 Expense History")
 if st.session_state.expenses:
     for exp in st.session_state.expenses:
-        st.markdown(f"**{exp['payer']}** paid ₹{exp['total_amount']:.2f} for *{exp['description']}*")
+        st.markdown(f"**{exp['description']}**")
         for item in exp["items"]:
             st.markdown(
-                f"- {item['desc']} ₹{item['cost']:.2f} shared by {', '.join(item['participants'])}"
+                f"- {item['payer']} paid ₹{item['cost']:.2f} for *{item['desc']}*, shared by {', '.join(item['participants'])}"
             )
 else:
     st.info("No expenses logged yet.")
@@ -89,11 +77,11 @@ else:
 def calculate_balances(members, expenses):
     balances = defaultdict(float)
     for exp in expenses:
-        balances[exp["payer"]] += exp["total_amount"]
         for item in exp["items"]:
             split_cost = item["cost"] / len(item["participants"])
             for person in item["participants"]:
                 balances[person] -= split_cost
+            balances[item["payer"]] += item["cost"]
     return balances
 
 # Settlement suggestion
