@@ -86,7 +86,19 @@ with st.form("expense_form"):
     desc = st.text_input("Description")
     amount = st.number_input("Amount", min_value=1.0, format="%.2f")
     paid_by = st.text_input("Paid By")
-    participants = st.multiselect("Participants", options=list(set(all_people + [paid_by])))
+
+    # Show existing participants only if they exist
+    participants = st.multiselect(
+        "Participants",
+        options=all_people if all_people else [],
+        help="Select from existing participants (if any)"
+    )
+
+    # Allow adding a new participant manually
+    new_participant = st.text_input("Add new participant (optional)")
+    if new_participant:
+        participants.append(new_participant)
+
     submitted = st.form_submit_button("Add Expense")
 
     if submitted:
@@ -128,7 +140,6 @@ if balances:
             st.markdown(f"🔴 **{person} owes ₹{abs(bal):.2f}**")
         else:
             st.markdown(f"⚪ **{person} is settled up**")
-    # Bar chart
     bal_df = pd.DataFrame(balances.items(), columns=["Person", "Balance"])
     st.bar_chart(bal_df.set_index("Person"))
 else:
