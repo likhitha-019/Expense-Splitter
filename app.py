@@ -5,11 +5,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import date
 
-# ---- Initialize group_id first ----
+# =========================
+# 🔹 Initialization
+# =========================
 if "group_id" not in st.session_state:
     st.session_state.group_id = uuid.uuid4().hex  # 32-char secure ID
 
-# ---- Then check query params ----
 query_params = st.query_params
 if "group_id" in query_params:
     invited_group_id = query_params["group_id"]
@@ -17,20 +18,9 @@ if "group_id" in query_params:
 else:
     st.session_state.is_invited = False
 
-# ---- Set page config ----
 st.set_page_config(page_title="Multi-Payer Expense Splitter", layout="wide")
 
-    
-
-    # Check if it matches current group
-    if invited_group_id == st.session_state.group_id:
-        st.session_state.is_invited = True
-    else:
-        st.session_state.is_invited = False
-
-
-
-# Initialize session state
+# Session state variables
 if "members" not in st.session_state:
     st.session_state.members = []
 if "expenses" not in st.session_state:
@@ -38,11 +28,17 @@ if "expenses" not in st.session_state:
 if "groups" not in st.session_state:
     st.session_state.groups = {}
 
+# =========================
+# 🔹 App Header
+# =========================
 st.title("💰 Multi-Payer Expense Splitter")
 st.markdown("Split costs fairly when different people pay for different items. Perfect for shared meals, trips, or roommate life!")
 
-# Sidebar: Add group members
+# =========================
+# 🔹 Sidebar: Members & Invite
+# =========================
 st.sidebar.header("👥 Group Members")
+
 new_member = st.sidebar.text_input("Add member name")
 new_group = st.sidebar.selectbox("Assign to group", ["Roommates", "Friends", "Family", "Other"])
 if st.sidebar.button("Add Member") and new_member:
@@ -51,28 +47,31 @@ if st.sidebar.button("Add Member") and new_member:
         st.session_state.groups[new_member] = new_group
     else:
         st.sidebar.warning("Member already exists.")
-        
+
+# Show invite link
 st.sidebar.subheader("🔗 Invite Friends")
 base_url = "https://your-app.streamlit.app"  # replace with actual deployed URL
 invite_link = f"{base_url}?group_id={st.session_state.group_id}"
 st.sidebar.code(invite_link, language="text")
 
-
+# Show current members
 if st.session_state.members:
     st.sidebar.write("### Current Members")
     for m in st.session_state.members:
         st.sidebar.write(f"- {m} ({st.session_state.groups.get(m, 'Unassigned')})")
 
-# Sidebar: Date filter
+# Date filter
 st.sidebar.subheader("📅 Filter by Date")
 start_date = st.sidebar.date_input("Start Date", value=date(2025, 1, 1))
 end_date = st.sidebar.date_input("End Date", value=date.today())
 
-
+# =========================
+# 🔹 Invite Link Handling
+# =========================
 if "is_invited" in st.session_state and st.session_state.is_invited:
     st.success("✅ You have joined the group via invite link!")
 
-    # Automatically add user (ask name once)
+    # Let friend join group
     friend_name = st.text_input("Enter your name to confirm joining")
     if st.button("Join Group"):
         if friend_name and friend_name not in st.session_state.members:
@@ -82,8 +81,9 @@ if "is_invited" in st.session_state and st.session_state.is_invited:
         elif friend_name in st.session_state.members:
             st.info("You are already in the group.")
 
-
-# Main: Log itemized expense
+# =========================
+# 🔹 Log New Expense
+# =========================
 st.subheader("🧾 Log a New Itemized Expense")
 with st.form("expense_form"):
     description = st.text_input("Expense Description")
@@ -106,7 +106,6 @@ with st.form("expense_form"):
         })
 
     submitted = st.form_submit_button("Add Expense")
-
     if submitted:
         if all(item["cost"] > 0 and item["participants"] for item in item_data):
             expense = {
@@ -120,13 +119,14 @@ with st.form("expense_form"):
         else:
             st.error("Please fill all fields correctly.")
 
-# Filter expenses by date
+# =========================
+# 🔹 Expense History
+# =========================
 filtered_expenses = [
     exp for exp in st.session_state.expenses
     if start_date <= exp["date"] <= end_date
 ]
 
-# Display expenses
 st.subheader("📋 Expense History")
 if filtered_expenses:
     for exp in filtered_expenses:
@@ -138,7 +138,9 @@ if filtered_expenses:
 else:
     st.info("No expenses logged in selected date range.")
 
-# Calculate balances
+# =========================
+# 🔹 Balance Calculation
+# =========================
 def calculate_balances(members, expenses):
     balances = defaultdict(float)
     for exp in expenses:
@@ -149,10 +151,11 @@ def calculate_balances(members, expenses):
             balances[item["payer"]] += item["cost"]
     return balances
 
-# Settlement suggestion
+# =========================
+# 🔹 Settlement Algorithm
+# =========================
 def suggest_settlements(balances):
-    creditors = []
-    debtors = []
+    creditors, debtors = [], []
     for person, balance in balances.items():
         if balance > 0:
             creditors.append([person, balance])
@@ -168,19 +171,18 @@ def suggest_settlements(balances):
         settlements.append(f"{debtor} pays {creditor} ₹{payment:.2f}")
         debtors[i][1] -= payment
         creditors[j][1] -= payment
-        if debtors[i][1] == 0:
-            i += 1
-        if creditors[j][1] == 0:
-            j += 1
+        if debtors[i][1] == 0: i += 1
+        if creditors[j][1] == 0: j += 1
     return settlements
 
-# Show balances
+# =========================
+# 🔹 Balances & Charts
+# =========================
 st.subheader("📊 Per-Person Balances")
 balances = calculate_balances(st.session_state.members, filtered_expenses)
 for person in st.session_state.members:
     st.write(f"- {person}: ₹{balances[person]:.2f}")
 
-# Bar Chart: Debt vs Credit
 st.subheader("📉 Balance Bar Chart")
 balance_df = pd.DataFrame(list(balances.items()), columns=["Member", "Balance"])
 colors = ['green' if x > 0 else 'red' for x in balance_df["Balance"]]
@@ -192,7 +194,6 @@ ax.set_ylabel("Balance (₹)")
 ax.set_title("Who owes and who is owed")
 st.pyplot(fig)
 
-# Pie Chart: Contributions
 def get_total_contributions(expenses):
     contributions = Counter()
     for exp in expenses:
@@ -209,17 +210,17 @@ if contributions:
     ax2.axis('equal')
     st.pyplot(fig2)
 
-# Group-wise summary
+# =========================
+# 🔹 Group Summary & Settlements
+# =========================
 st.subheader("👥 Group-Wise Balances")
 group_balances = defaultdict(float)
 for member, balance in balances.items():
     group = st.session_state.groups.get(member, "Unassigned")
     group_balances[group] += balance
-
 for group, total in group_balances.items():
     st.write(f"- {group}: ₹{total:.2f}")
 
-# Settlement suggestions
 st.subheader("🤝 Settlement Suggestions")
 settlements = suggest_settlements(balances)
 if settlements:
@@ -228,7 +229,9 @@ if settlements:
 else:
     st.write("All balances are settled!")
 
-# Downloadable report
+# =========================
+# 🔹 Download Report
+# =========================
 st.subheader("📥 Download Report")
 report_text = f"Expense Report ({start_date} to {end_date})\n\n"
 for person in st.session_state.members:
