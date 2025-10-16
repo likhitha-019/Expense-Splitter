@@ -5,17 +5,21 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import date
 
+# ---- Initialize group_id first ----
+if "group_id" not in st.session_state:
+    st.session_state.group_id = uuid.uuid4().hex  # 32-char secure ID
+
+# ---- Then check query params ----
 query_params = st.query_params
 if "group_id" in query_params:
     invited_group_id = query_params["group_id"]
     st.session_state.is_invited = (invited_group_id == st.session_state.group_id)
+else:
+    st.session_state.is_invited = False
 
-
+# ---- Set page config ----
 st.set_page_config(page_title="Multi-Payer Expense Splitter", layout="wide")
 
-if "group_id" not in st.session_state:
-    # Generate a strong random group_id
-    st.session_state.group_id = uuid.uuid4().hex  # 32-char secure ID
     
 
     # Check if it matches current group
