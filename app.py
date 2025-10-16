@@ -5,7 +5,26 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import date
 
+query_params = st.query_params
+if "group_id" in query_params:
+    invited_group_id = query_params["group_id"]
+    st.session_state.is_invited = (invited_group_id == st.session_state.group_id)
+
+
 st.set_page_config(page_title="Multi-Payer Expense Splitter", layout="wide")
+
+if "group_id" not in st.session_state:
+    # Generate a strong random group_id
+    st.session_state.group_id = uuid.uuid4().hex  # 32-char secure ID
+    
+
+    # Check if it matches current group
+    if invited_group_id == st.session_state.group_id:
+        st.session_state.is_invited = True
+    else:
+        st.session_state.is_invited = False
+
+
 
 # Initialize session state
 if "members" not in st.session_state:
@@ -28,6 +47,12 @@ if st.sidebar.button("Add Member") and new_member:
         st.session_state.groups[new_member] = new_group
     else:
         st.sidebar.warning("Member already exists.")
+        
+st.sidebar.subheader("🔗 Invite Friends")
+base_url = "https://your-app.streamlit.app"  # replace with actual deployed URL
+invite_link = f"{base_url}?group_id={st.session_state.group_id}"
+st.sidebar.code(invite_link, language="text")
+
 
 if st.session_state.members:
     st.sidebar.write("### Current Members")
@@ -38,6 +63,21 @@ if st.session_state.members:
 st.sidebar.subheader("📅 Filter by Date")
 start_date = st.sidebar.date_input("Start Date", value=date(2025, 1, 1))
 end_date = st.sidebar.date_input("End Date", value=date.today())
+
+
+if "is_invited" in st.session_state and st.session_state.is_invited:
+    st.success("✅ You have joined the group via invite link!")
+
+    # Automatically add user (ask name once)
+    friend_name = st.text_input("Enter your name to confirm joining")
+    if st.button("Join Group"):
+        if friend_name and friend_name not in st.session_state.members:
+            st.session_state.members.append(friend_name)
+            st.session_state.groups[friend_name] = "Invited"
+            st.success(f"🎉 Welcome {friend_name}, you are now part of the group!")
+        elif friend_name in st.session_state.members:
+            st.info("You are already in the group.")
+
 
 # Main: Log itemized expense
 st.subheader("🧾 Log a New Itemized Expense")
